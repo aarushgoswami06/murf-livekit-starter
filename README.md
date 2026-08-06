@@ -1,3 +1,9 @@
+---
+noteId: "6a47fa9191bb11f1a5702f7f62880c85"
+tags: []
+
+---
+
 # Voice Agent Starter — Powered by Murf Falcon
 
 Build a production voice AI agent in 5 minutes. Powered by the fastest TTS on the market - swap the system prompt to build anything from customer support to language tutors.

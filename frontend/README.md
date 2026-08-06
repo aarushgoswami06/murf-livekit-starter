@@ -1,3 +1,9 @@
+---
+noteId: "6a44511091bb11f1a5702f7f62880c85"
+tags: []
+
+---
+
 # Frontend — Voice Agent UI
 
 The React/Next.js frontend for the Voice Agent Starter. Built with [LiveKit Agents UI](https://livekit.io/ui) components, it provides a polished interface for real-time voice conversations with your agent.
