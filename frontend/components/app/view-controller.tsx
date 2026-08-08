@@ -1,8 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import { useTheme } from 'next-themes';
-import { AnimatePresence, motion } from 'motion/react';
+import { motion } from 'motion/react';
 import { useSessionContext } from '@livekit/components-react';
+
 import type { AppConfig } from '@/app-config';
 import { AgentSessionView_01 } from '@/components/agents-ui/blocks/agent-session-view-01';
 import { WelcomeView } from '@/components/app/welcome-view';
@@ -36,19 +38,31 @@ export function ViewController({ appConfig }: ViewControllerProps) {
   const { isConnected, start } = useSessionContext();
   const { resolvedTheme } = useTheme();
 
+  // Keeps the session screen visible even after disconnect
+  // so we can show "Call ended" and a restart button.
+  const [hasStarted, setHasStarted] = useState(false);
+
+  const handleStartCall = async () => {
+    setHasStarted(true);
+    await start();
+  };
+
+  const handleRestart = async () => {
+    await start();
+  };
+
   return (
-    <AnimatePresence mode="wait">
-      {/* Welcome view */}
-      {!isConnected && (
+    <>
+      {!hasStarted && !isConnected && (
         <MotionWelcomeView
           key="welcome"
           {...VIEW_MOTION_PROPS}
           startButtonText={appConfig.startButtonText}
-          onStartCall={start}
+          onStartCall={handleStartCall}
         />
       )}
-      {/* Session view */}
-      {isConnected && (
+
+      {hasStarted && (
         <MotionSessionView
           key="session-view"
           {...VIEW_MOTION_PROPS}
@@ -69,9 +83,10 @@ export function ViewController({ appConfig }: ViewControllerProps) {
           audioVisualizerRadialBarCount={appConfig.audioVisualizerRadialBarCount}
           audioVisualizerRadialRadius={appConfig.audioVisualizerRadialRadius}
           audioVisualizerWaveLineWidth={appConfig.audioVisualizerWaveLineWidth}
+          onRestart={handleRestart}
           className="fixed inset-0"
         />
       )}
-    </AnimatePresence>
+    </>
   );
 }

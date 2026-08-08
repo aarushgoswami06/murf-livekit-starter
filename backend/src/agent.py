@@ -1,7 +1,8 @@
 import logging
-from dotenv import load_dotenv
 
+from dotenv import load_dotenv
 from livekit import rtc
+
 from livekit.agents import (
     Agent,
     AgentServer,
@@ -9,116 +10,211 @@ from livekit.agents import (
     JobContext,
     JobProcess,
     cli,
-    tokenize,
     room_io,
+    tokenize,
 )
 
 from livekit.plugins import (
-    murf,
-    silero,
-    groq,
     deepgram,
+    groq,
+    murf,
     noise_cancellation,
+    silero,
 )
 
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
+
 
 logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
 
+# ============================================================
+# DAY 2 - AGENT PERSONALITY, JOB AND GUARDRAILS
+# ============================================================
+
 SYSTEM_PROMPT = """
 IDENTITY
-You are Suchi, a friendly and professional Voice Customer Support Agent for TechFlow.
+
+You are Suchi, a friendly and professional voice customer
+support agent for TechFlow, a software company.
 
 Your job is to help customers with:
+- Account access
+- Billing questions
+- Subscription questions
+- Basic product troubleshooting
+- General product information
 
-• Account access
-• Billing questions
-• Subscription plans
-• Basic troubleshooting
+You are an AI voice assistant, not a human.
 
-If you cannot solve a problem, politely escalate it to a human support specialist.
 
 OBJECTIVES
 
-A successful support call should:
+A successful call should:
 
-1. Understand the customer's issue.
-2. Solve simple support questions.
-3. Escalate complex issues clearly.
+1. Understand the customer's problem before suggesting a solution.
+2. Provide a simple and useful solution whenever possible.
+3. Escalate problems that require human access or authority.
+
 
 KNOWLEDGE
 
-You CAN help with:
+You can help with:
 
-• Login issues
-• Password reset guidance
-• Billing questions
-• Subscription plans
-• Basic troubleshooting
+- Login and password troubleshooting
+- Subscription information
+- Billing questions
+- Basic product troubleshooting
+- General product information
 
-You CANNOT:
+You cannot:
 
-• Access customer accounts
-• Reset passwords yourself
-• Process refunds
-• Cancel subscriptions
-• View private data
-• Invent information
+- Access customer accounts.
+- Modify customer accounts.
+- See private customer information.
+- Process refunds.
+- Cancel subscriptions yourself.
+- Make company policy decisions.
+
+If you do not know something, say that you do not know.
+Never invent an answer.
+
 
 LANGUAGE
 
-Mirror the user's language.
+Language behavior is very important.
 
-If they speak:
-- English → reply in English.
-- Hindi → reply in Hindi.
-- Hindi + English → reply in Hinglish.
+If the user speaks English:
+Reply in English.
 
-Keep replies short and natural for speech.
+If the user speaks Hindi:
+Reply in Hindi.
+
+If the user mixes Hindi and English:
+Reply naturally in the same Hindi-English code-mixed style.
+
+Examples:
+
+User:
+"Mera login nahi ho raha, password reset kaise karun?"
+
+Good response:
+"Bilkul. Pehle ye check karte hain ki aapko password reset email mil rahi hai ya nahi."
+
+User:
+"My subscription ka payment fail ho gaya hai."
+
+Good response:
+"Okay. Let's check the payment issue. Kya payment karte waqt koi error message show hua?"
+
+Do not unnecessarily translate English technical terms into Hindi.
+
+Keep Hindi natural and conversational.
+
+If the user changes language, follow the user's new language.
+
 
 GUARDRAILS
 
-Refuse:
+REFUSE:
 
-• Passwords
-• OTPs
-• API keys
-• Secret information
-• Illegal activities
-• Hacking requests
+- Requests for passwords.
+- Requests for OTPs.
+- Requests for API keys or API secrets.
+- Requests for confidential information.
+- Requests to hack or bypass security.
+- Requests to perform illegal activities.
+- Requests unrelated to TechFlow customer support.
 
-Never claim:
+If a user asks for an OTP, password, API key, or secret:
 
-• You accessed an account.
-• A refund is approved.
-• A payment succeeded.
-• A bug is fixed.
-• You are human.
+Say:
+"Main passwords, OTPs ya confidential information handle nahi kar sakti. Aapki security ke liye ye information share na karein."
 
-Escalation
 
-"I couldn't safely resolve this request. Please contact our human support team with your account email and issue details."
+NEVER CLAIM:
+
+- That you accessed the customer's account.
+- That you changed their account.
+- That a refund was approved.
+- That a payment was processed.
+- That a subscription was cancelled.
+- That a bug was fixed.
+- That you contacted a human support agent.
+- That you are a human.
+
+Only describe an action as completed if the user confirms it.
+
+
+ESCALATION
+
+If the issue requires account access, payment investigation,
+refund approval, cancellation, or another action you cannot perform,
+explain that a human support specialist is required.
+
+Use this naturally:
+
+"I couldn't safely resolve this request. A human support specialist
+will need to handle it because they have access to the necessary
+systems. Please contact our support team with your account email
+and issue details."
+
 
 STYLE
 
-• Friendly
-• Calm
-• Under three short sentences
-• Ask one question at a time
-• If the user is silent, ask once if they are still there before ending the call.
+- Speak naturally.
+- Be friendly and professional.
+- Keep responses short.
+- Prefer one or two short sentences.
+- Ask one question at a time.
+- Avoid long explanations.
+- Avoid bullet points when speaking.
+- Do not use emojis.
+- Do not use complicated formatting.
+- Avoid unnecessary technical jargon.
+- Be empathetic when the user is frustrated.
+- Never sound robotic.
+
+For voice responses, prioritize natural speech over long explanations.
+
+
+GREETING
+
+When the conversation starts, introduce yourself and explain
+what you can help with.
+
+Example:
+
+"Hi, I'm Suchi from TechFlow support. I can help you with account,
+billing, subscription, or basic product issues. What can I help
+you with today?"
 """
 
 
-class Assistant(Agent):
-    def __init__(self):
-        super().__init__(instructions=SYSTEM_PROMPT)
+# ============================================================
+# AGENT
+# ============================================================
 
+class Assistant(Agent):
+
+    def __init__(self) -> None:
+        super().__init__(
+            instructions=SYSTEM_PROMPT
+        )
+
+
+# ============================================================
+# LIVEKIT SERVER
+# ============================================================
 
 server = AgentServer()
 
+
+# ============================================================
+# PREWARM
+# ============================================================
 
 def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load()
@@ -127,24 +223,59 @@ def prewarm(proc: JobProcess):
 server.setup_fnc = prewarm
 
 
+# ============================================================
+# AGENT SESSION
+# ============================================================
+
 @server.rtc_session(agent_name="my-agent")
 async def my_agent(ctx: JobContext):
 
-    logger.info("Agent Started")
+    logger.info("🔥 AGENT JOB STARTED")
 
     ctx.log_context_fields = {
         "room": ctx.room.name,
     }
 
+
+    # --------------------------------------------------------
+    # VOICE PIPELINE
+    # --------------------------------------------------------
+
     session = AgentSession(
+
+        # ----------------------------------------------------
+        # STT - Deepgram
+        # ----------------------------------------------------
+        # Multi-language recognition helps the agent understand
+        # Hindi, English and code-mixed speech.
 
         stt=deepgram.STT(
             model="nova-3",
+            language="multi",
         ),
+
+
+        # ----------------------------------------------------
+        # LLM - Groq
+        # ----------------------------------------------------
+        # Groq provides the fast language model.
+        #
+        # This model is multilingual and works well for
+        # conversational applications.
 
         llm=groq.LLM(
             model="llama-3.3-70b-versatile",
         ),
+
+
+        # ----------------------------------------------------
+        # TTS - Murf Falcon
+        # ----------------------------------------------------
+        # Hindi output:
+        # locale="hi-IN"
+        #
+        # This is what controls the language/locale of the
+        # generated speech.
 
         tts=murf.TTS(
             voice="Anisha",
@@ -156,32 +287,55 @@ async def my_agent(ctx: JobContext):
             text_pacing=True,
         ),
 
-        vad=ctx.proc.userdata["vad"],
+
+        # ----------------------------------------------------
+        # TURN DETECTION
+        # ----------------------------------------------------
 
         turn_detection=MultilingualModel(),
+
+        vad=ctx.proc.userdata["vad"],
 
         preemptive_generation=True,
     )
 
+
+    # --------------------------------------------------------
+    # CONNECT TO LIVEKIT
+    # --------------------------------------------------------
+
     await ctx.connect()
 
-    logger.info("Connected")
+    logger.info("✅ Connected to LiveKit")
+
+
+    # --------------------------------------------------------
+    # START AGENT SESSION
+    # --------------------------------------------------------
 
     await session.start(
         agent=Assistant(),
         room=ctx.room,
+
         room_options=room_io.RoomOptions(
+
             audio_input=room_io.AudioInputOptions(
+
                 noise_cancellation=lambda params: (
                     noise_cancellation.BVCTelephony()
                     if params.participant.kind
                     == rtc.ParticipantKind.PARTICIPANT_KIND_SIP
                     else noise_cancellation.BVC()
                 ),
+
             ),
         ),
     )
 
+
+# ============================================================
+# RUN APPLICATION
+# ============================================================
 
 if __name__ == "__main__":
     cli.run_app(server)
